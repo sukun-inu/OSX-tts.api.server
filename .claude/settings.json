@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/Kawasaki/.claude/projects/c--Users-Kawasaki-Desktop-Develop-OSX-tts-api-server/memory/**)"
+      "Read(//c/Users/Kawasaki/.claude/projects/c--Users-Kawasaki-Desktop-Develop-OSX-tts-api-server/memory/**)",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Kawasaki\\\\Desktop\\\\Develop\\\\OSX-tts.api.server\\\\nginx\")"
     ]
   }
 }

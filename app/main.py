@@ -29,6 +29,11 @@ logger = logging.getLogger("tts-api")
 
 settings = get_settings()
 
+# 進行中の合成を追跡する dict。同一 audio_id のリクエストが同時に来た場合、
+# 後続リクエストは既存の Future を待つだけで say を二重実行しない。
+# asyncio はシングルスレッドなので await をまたがない範囲では lock 不要。
+_synthesis_in_flight: dict[str, asyncio.Future] = {}
+
 # フォーマットごとの Content-Type
 MEDIA_TYPES: dict[str, str] = {
     "aiff": "audio/aiff",
@@ -172,10 +177,23 @@ async def synthesize(
     cached = await asyncio.to_thread(storage.is_fresh, path)
 
     if not cached:
-        try:
-            await tts.synthesize(text, voice, rate, fmt, path)
-        except tts.SynthesisError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        if audio_id in _synthesis_in_flight:
+            # 同一パラメータの合成がすでに進行中 — 完了を待つだけで say を再実行しない
+            try:
+                await _synthesis_in_flight[audio_id]
+            except tts.SynthesisError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        else:
+            fut: asyncio.Future = asyncio.get_running_loop().create_future()
+            _synthesis_in_flight[audio_id] = fut
+            try:
+                await tts.synthesize(text, voice, rate, fmt, path)
+                fut.set_result(None)
+            except tts.SynthesisError as exc:
+                fut.set_exception(exc)
+                raise HTTPException(status_code=exc.status_code, detail=exc.message)
+            finally:
+                _synthesis_in_flight.pop(audio_id, None)
 
     stat = await asyncio.to_thread(path.stat)
 
@@ -205,4 +223,6 @@ async def synthesize(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=settings.host, port=settings.port)
+    # workers > 1 の場合は文字列参照が必要 (multiprocessing でプロセスを fork するため)
+    app_ref = "app.main:app" if settings.workers > 1 else app
+    uvicorn.run(app_ref, host=settings.host, port=settings.port, workers=settings.workers)

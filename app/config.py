@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     # --- 同時実行・タイムアウト ---
     max_concurrent_synthesis: int = 4
     synthesis_timeout_seconds: int = 30
+    workers: int = 1  # uvicorn ワーカープロセス数 (マルチコア活用時は CPU 数以下で調整)
 
     # --- 外部コマンド ---
     ffmpeg_path: str = "ffmpeg"
