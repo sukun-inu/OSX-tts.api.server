@@ -16,10 +16,10 @@ log_ok()   { echo -e "${GREEN}[+]${RESET} $*"; }
 log_warn() { echo -e "${YELLOW}[!]${RESET} $*"; }
 log_step() { echo -e "\n${BOLD}━━━━ $* ━━━━${RESET}"; }
 
-INSTALL_DIR="/usr/local/opt/tts-api"
-AUDIO_DIR="/usr/local/var/audio/tts-api"
-LOG_DIR="/usr/local/var/log/tts-api"
-RUN_DIR="/usr/local/var/run/tts-api"
+INSTALL_DIR="${TTS_INSTALL_DIR:-/usr/local/opt/tts-api}"
+AUDIO_DIR="${TTS_AUDIO_DIR:-/usr/local/var/audio/tts-api}"
+LOG_DIR="${TTS_LOG_DIR:-/usr/local/var/log/tts-api}"
+RUN_DIR="${TTS_RUN_DIR:-/usr/local/var/run/tts-api}"
 TTS_DAEMON_LABEL="local.tts-api"
 PLIST_PATH="/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 
@@ -32,30 +32,23 @@ echo ""
 sudo -v
 
 # ──────────────────────────────────────────────────────────────────
-log_step "LaunchAgent 停止・削除"
+log_step "LaunchDaemon 停止・削除"
 # ──────────────────────────────────────────────────────────────────
 
-# TTS API LaunchDaemon (現行)
+# TTS API LaunchDaemon (現行: root で動作)
 if [[ -f "$PLIST_PATH" ]]; then
   sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
   sudo rm -f "$PLIST_PATH"
   log_ok "TTS API LaunchDaemon 停止"
 fi
 
-# 旧形式: user LaunchAgent
+# 旧形式: user LaunchAgent (移行前の古いインストール)
 OLD_AGENT="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
 if [[ -f "$OLD_AGENT" ]]; then
   launchctl bootout "gui/$UID" "$OLD_AGENT" 2>/dev/null || true
   rm -f "$OLD_AGENT"
   log_ok "旧 LaunchAgent 削除"
 fi
-
-# nginx 関連 (残骸があれば)
-while IFS= read -r -d '' plist; do
-  sudo launchctl bootout system "$plist" 2>/dev/null || true
-  sudo rm -f "$plist"
-  log_ok "削除: $plist"
-done < <(find /Library/LaunchDaemons -maxdepth 1 -name '*nginx*.plist' -print0 2>/dev/null)
 
 # ──────────────────────────────────────────────────────────────────
 log_step "ファイル・ディレクトリ削除"
@@ -72,3 +65,4 @@ done
 # ──────────────────────────────────────────────────────────────────
 echo ""
 log_ok "クリーンアップ完了。install.sh を再実行できます。"
+log_ok "  curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/scripts/install.sh | bash"

@@ -72,7 +72,7 @@ def _last_activity(stat: os.stat_result) -> float:
     """ファイルの最終アクティビティ時刻を返す。
 
     mtime (書き込み) と atime (読み込み) の新しい方を採用する。
-    nginx が /audio/ を直接配信した場合は atime が更新されるため、
+    FastAPI の StaticFiles がファイルを読んだ場合に atime が更新されるため、
     ダウンロード完了のタイミングを atime で近似できる。
     """
     return max(stat.st_mtime, stat.st_atime)
@@ -83,7 +83,7 @@ def purge_expired() -> int:
 
     判定基準: max(mtime, atime) + audio_ttl_seconds < now
       - mtime: 生成完了時刻
-      - atime: nginx / FastAPI による最終アクセス時刻
+      - atime: FastAPI による最終アクセス時刻
     生成途中の一時ファイル (.tmp-*) は mtime が新しいため削除対象にならない。
     同期I/O。非同期コンテキストからは asyncio.to_thread 経由で呼ぶこと。
     """

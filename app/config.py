@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # --- 音声ファイル ---
-    # nginx の alias と一致させる共有ディレクトリ
     audio_dir: Path = Path("audio")
     # レスポンス url の絶対プレフィックス。空なら相対パスを返す
     public_base_url: str = ""
@@ -63,7 +62,7 @@ class Settings(BaseSettings):
     @field_validator("audio_dir")
     @classmethod
     def _resolve_audio_dir(cls, v: Path) -> Path:
-        """音声ディレクトリを絶対パスへ解決する (nginx alias と一致させるため)。"""
+        """音声ディレクトリを絶対パスへ解決する。"""
         return v.expanduser().resolve()
 
     @field_validator("default_format")

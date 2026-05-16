@@ -22,6 +22,7 @@ log_error(){ echo -e "${RED}[✗]${RESET} $*" >&2; }
 log_step() { echo -e "\n${BOLD}━━━━ $* ━━━━${RESET}"; }
 
 INSTALL_DIR="${TTS_INSTALL_DIR:-/usr/local/opt/tts-api}"
+AUDIO_DIR="${TTS_AUDIO_DIR:-/usr/local/var/audio/tts-api}"
 TTS_DAEMON_LABEL="local.tts-api"
 API_PORT="${TTS_PORT:-8000}"
 
@@ -60,6 +61,21 @@ log_step "依存パッケージの更新"
 "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip </dev/null
 "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt" </dev/null
 log_info "依存パッケージ更新完了"
+
+# ──────────────────────────────────────────────────────────────────
+log_step "音声ディレクトリの権限確認"
+# ──────────────────────────────────────────────────────────────────
+# 旧インストール (root:wheel 755) からの移行: インストールユーザーが書き込めるよう修正する
+CURRENT_USER="$(id -un)"
+if [[ -d "$AUDIO_DIR" ]]; then
+  AUDIO_OWNER="$(stat -f "%Su" "$AUDIO_DIR" 2>/dev/null || echo "")"
+  if [[ "$AUDIO_OWNER" == "root" ]]; then
+    sudo chown -R "${CURRENT_USER}:wheel" "$AUDIO_DIR"
+    log_info "音声ディレクトリのオーナーを ${CURRENT_USER} に修正しました"
+  else
+    log_info "音声ディレクトリのオーナー: $AUDIO_OWNER (変更不要)"
+  fi
+fi
 
 # ──────────────────────────────────────────────────────────────────
 log_step "デーモンの再起動"
