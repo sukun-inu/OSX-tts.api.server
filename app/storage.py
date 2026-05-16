@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -67,14 +68,14 @@ def audio_count() -> int:
     )
 
 
-def _last_activity(stat: object) -> float:
+def _last_activity(stat: os.stat_result) -> float:
     """ファイルの最終アクティビティ時刻を返す。
 
     mtime (書き込み) と atime (読み込み) の新しい方を採用する。
     nginx が /audio/ を直接配信した場合は atime が更新されるため、
     ダウンロード完了のタイミングを atime で近似できる。
     """
-    return max(stat.st_mtime, stat.st_atime)  # type: ignore[union-attr]
+    return max(stat.st_mtime, stat.st_atime)
 
 
 def purge_expired() -> int:

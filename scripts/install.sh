@@ -323,8 +323,12 @@ TTS_RATE_MIN=100
 TTS_RATE_MAX=400
 
 # --- キャッシュ・クリーンアップ ---------------------------------------------
-TTS_AUDIO_TTL_SECONDS=3600
-TTS_CLEANUP_INTERVAL_SECONDS=600
+# 最終アクティビティ (生成 or nginx アクセス) から削除するまでの秒数
+TTS_AUDIO_TTL_SECONDS=60
+# バックグラウンドクリーンアップの実行間隔 (秒)
+TTS_CLEANUP_INTERVAL_SECONDS=15
+# mode=file 配信完了後にファイルを削除するまでの猶予 (秒)
+TTS_POST_SERVE_DELETE_DELAY=5
 
 # --- 同時実行・タイムアウト -------------------------------------------------
 TTS_MAX_CONCURRENT_SYNTHESIS=4
@@ -348,11 +352,13 @@ sudo chmod 1777 "$AUDIO_DIR"    # world-writable + sticky bit
 log_info "音声ディレクトリ : $AUDIO_DIR"
 log_info "ログディレクトリ : $LOG_DIR"
 
-# nginx 用ディレクトリ
-sudo mkdir -p /usr/local/var/log/nginx /usr/local/var/run/nginx/client_body_temp
-sudo touch /usr/local/var/log/nginx/access.log /usr/local/var/log/nginx/error.log
-sudo chown -R root:wheel /usr/local/var/log/nginx /usr/local/var/run/nginx
-sudo chmod -R 755 /usr/local/var/log/nginx /usr/local/var/run/nginx
+# nginx 用ディレクトリ (Homebrew prefix に合わせる: Apple Silicon=/opt/homebrew, Intel=/usr/local)
+NGINX_VAR_LOG="${HOMEBREW_PREFIX}/var/log/nginx"
+NGINX_VAR_RUN="${HOMEBREW_PREFIX}/var/run/nginx"
+sudo mkdir -p "$NGINX_VAR_LOG" "${NGINX_VAR_RUN}/client_body_temp"
+sudo touch "$NGINX_VAR_LOG/access.log" "$NGINX_VAR_LOG/error.log"
+sudo chown -R root:wheel "$NGINX_VAR_LOG" "$NGINX_VAR_RUN"
+sudo chmod -R 755 "$NGINX_VAR_LOG" "$NGINX_VAR_RUN"
 
 # ──────────────────────────────────────────────────────────────────
 log_step "nginx の設定"
@@ -470,10 +476,10 @@ sudo tee /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist >/dev/null <<PLIST
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/usr/local/var/log/nginx/stdout.log</string>
+    <string>${NGINX_VAR_LOG}/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/usr/local/var/log/nginx/stderr.log</string>
+    <string>${NGINX_VAR_LOG}/stderr.log</string>
 </dict>
 </plist>
 PLIST
