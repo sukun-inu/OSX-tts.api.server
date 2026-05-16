@@ -40,12 +40,19 @@ class SynthesisError(Exception):
 
 @cache
 def say_available() -> bool:
-    """say コマンドが利用可能か (= macOS 上で動作しているか)。
+    """say コマンドが利用可能か (= macOS 上で動作しているか)。"""
+    return Path("/usr/bin/say").is_file()
 
-    結果はプロセス実行中に変化しないためキャッシュし、shutil.which による
-    PATH 走査 (ブロッキングI/O) を 1 回だけに抑える。
+
+def _say_cmd() -> list[str]:
+    """say コマンドをユーザーセッション経由で実行するコマンドリストを返す。
+
+    LaunchDaemon コンテキストでは直接 say を呼ぶと CoreSpeech が音声チャンネルを
+    開けない (-915)。launchctl asuser UID でユーザーの bootstrap namespace に委譲
+    することで、ユーザーセッションの音声エンジンにアクセスできるようになる。
+    LaunchAgent や開発実行時でも同じ UID になるため副作用はない。
     """
-    return shutil.which("say") is not None
+    return ["/bin/launchctl", "asuser", str(os.getuid()), "/usr/bin/say"]
 
 
 @cache
@@ -83,7 +90,7 @@ async def _run_say(text: str, voice: str | None, rate: int | None, out_path: Pat
     # ファイル書き込みはブロッキングI/O のためスレッドプールへ退避する。
     text_path = await asyncio.to_thread(_write_temp_text, text)
     try:
-        args = ["say", "-f", text_path, "-o", str(out_path)]
+        args = _say_cmd() + ["-f", text_path, "-o", str(out_path)]
         if voice:
             args += ["-v", voice]
         if rate:
@@ -211,7 +218,7 @@ async def get_voices(force: bool = False) -> list[Voice]:
                 "say コマンドが見つかりません (macOS 上でのみ動作します)", 503
             )
         proc = await asyncio.create_subprocess_exec(
-            "say", "-v", "?",
+            *_say_cmd(), "-v", "?",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
