@@ -5,7 +5,6 @@
 # 使い方:
 #   bash scripts/uninstall.sh
 #   bash scripts/uninstall.sh --keep-audio    # 音声ファイルを残す
-#   bash scripts/uninstall.sh --keep-nginx    # nginx デーモンを残す
 #   bash scripts/uninstall.sh --yes           # 確認プロンプトをスキップ
 # ================================================================
 set -euo pipefail
@@ -24,17 +23,15 @@ AUDIO_DIR="${TTS_AUDIO_DIR:-/usr/local/var/audio/tts-api}"
 LOG_DIR="${TTS_LOG_DIR:-/usr/local/var/log/tts-api}"
 RUN_DIR="${TTS_RUN_DIR:-/usr/local/var/run/tts-api}"
 
-NGINX_DAEMON_LABEL="local.nginx"
 TTS_DAEMON_LABEL="local.tts-api"
+PLIST_PATH="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
 
 KEEP_AUDIO=false
-KEEP_NGINX=false
 YES=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --keep-audio) KEEP_AUDIO=true; shift ;;
-    --keep-nginx) KEEP_NGINX=true; shift ;;
     --yes|-y)     YES=true;        shift ;;
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --audio-dir)   AUDIO_DIR="$2";   shift 2 ;;
@@ -44,7 +41,6 @@ Usage: uninstall.sh [OPTIONS]
 
 OPTIONS:
   --keep-audio     音声ファイルを残す ($AUDIO_DIR)
-  --keep-nginx     nginx LaunchDaemon を残す
   --yes / -y       確認プロンプトをスキップ
   --install-dir DIR  インストール先 (default: $INSTALL_DIR)
   --audio-dir   DIR  音声ファイル保存先 (default: $AUDIO_DIR)
@@ -54,10 +50,8 @@ HELP
   esac
 done
 
-# macOS チェック
 if [[ "$(uname)" != "Darwin" ]]; then
-  echo "このスクリプトは macOS 専用です"
-  exit 1
+  echo "このスクリプトは macOS 専用です"; exit 1
 fi
 
 # ──────────────────────────────────────────────────────────────────
@@ -67,61 +61,43 @@ if [[ "$YES" == "false" ]]; then
   echo -e "${RED}${BOLD}警告: OSX TTS API をアンインストールします${RESET}"
   echo ""
   echo "以下を削除します:"
-  echo "  $INSTALL_DIR                                  (アプリ本体 + .venv)"
-  echo "  $LOG_DIR                                      (ログ)"
-  echo "  /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
-  [[ "$KEEP_NGINX" == "false" ]] && \
-    echo "  /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist  (nginx システムデーモン)"
+  echo "  $INSTALL_DIR                            (アプリ本体 + .venv)"
+  echo "  $LOG_DIR                                (ログ)"
+  echo "  $PLIST_PATH"
   [[ "$KEEP_AUDIO" == "false" ]] && \
     echo "  $AUDIO_DIR                              (音声ファイル)"
   echo ""
   read -r -p "続けますか? [y/N] " reply </dev/tty
   if [[ ! "$reply" =~ ^[Yy]$ ]]; then
-    echo "キャンセルしました"
-    exit 0
+    echo "キャンセルしました"; exit 0
   fi
 fi
 
-# sudo 確認
 sudo -v
 
 # ──────────────────────────────────────────────────────────────────
-log_step "TTS API デーモンの停止・削除"
+log_step "TTS API LaunchAgent の停止・削除"
 # ──────────────────────────────────────────────────────────────────
-if sudo launchctl print system/${TTS_DAEMON_LABEL} &>/dev/null; then
-  sudo launchctl bootout system /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist
-  log_info "TTS API デーモンを停止しました"
-fi
-sudo rm -f /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist
-log_info "削除: /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 
-# ──────────────────────────────────────────────────────────────────
-log_step "nginx の処理"
-# ──────────────────────────────────────────────────────────────────
-if [[ "$KEEP_NGINX" == "false" ]]; then
-  if sudo launchctl print system/${NGINX_DAEMON_LABEL} &>/dev/null; then
-    sudo launchctl bootout system /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist
-    log_info "nginx デーモンを停止しました"
-  fi
-  sudo rm -f /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist
-  log_info "削除: /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist"
-else
-  log_warn "nginx デーモンは保持します (--keep-nginx)"
+# LaunchAgent (現行)
+if [[ -f "$PLIST_PATH" ]]; then
+  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  log_info "TTS API LaunchAgent を停止しました"
 fi
 
-# nginx サイト設定を削除 (残す場合はコメントアウトする)
-for conf_dir in /opt/homebrew/etc/nginx/servers /usr/local/etc/nginx/servers; do
-  if [[ -f "$conf_dir/tts-api.conf" ]]; then
-    sudo rm -f "$conf_dir/tts-api.conf"
-    log_info "削除: $conf_dir/tts-api.conf"
-  fi
-done
+# 旧形式: system LaunchDaemon (v1 からの移行)
+if [[ -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" ]]; then
+  sudo launchctl bootout system "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" 2>/dev/null || true
+  sudo rm -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
+  log_info "旧 system LaunchDaemon を削除しました"
+fi
 
 # ──────────────────────────────────────────────────────────────────
 log_step "アプリファイルの削除"
 # ──────────────────────────────────────────────────────────────────
 if [[ -d "$INSTALL_DIR" ]]; then
-  rm -rf "$INSTALL_DIR"
+  sudo rm -rf "$INSTALL_DIR"
   log_info "削除: $INSTALL_DIR"
 else
   log_warn "インストールディレクトリが見つかりません: $INSTALL_DIR"
@@ -152,9 +128,3 @@ fi
 # ──────────────────────────────────────────────────────────────────
 echo ""
 log_info "アンインストール完了"
-if [[ "$KEEP_NGINX" == "true" ]]; then
-  echo ""
-  log_warn "nginx デーモンは残っています。手動で停止する場合:"
-  echo "  sudo launchctl bootout system /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist"
-  echo "  sudo rm /Library/LaunchDaemons/${NGINX_DAEMON_LABEL}.plist"
-fi

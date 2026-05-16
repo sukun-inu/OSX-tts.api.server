@@ -21,7 +21,7 @@ AUDIO_DIR="/usr/local/var/audio/tts-api"
 LOG_DIR="/usr/local/var/log/tts-api"
 RUN_DIR="/usr/local/var/run/tts-api"
 TTS_DAEMON_LABEL="local.tts-api"
-NGINX_DAEMON_LABEL="local.nginx"
+PLIST_PATH="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
 
 if [[ "$(uname)" != "Darwin" ]]; then
   echo "macOS 専用です"; exit 1
@@ -32,34 +32,29 @@ echo ""
 sudo -v
 
 # ──────────────────────────────────────────────────────────────────
-log_step "LaunchDaemon 停止・削除"
+log_step "LaunchAgent 停止・削除"
 # ──────────────────────────────────────────────────────────────────
 
-# TTS API
-if sudo launchctl print system/${TTS_DAEMON_LABEL} &>/dev/null; then
-  sudo launchctl bootout system /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist 2>/dev/null || true
-  log_ok "TTS API デーモン停止"
+# TTS API LaunchAgent (現行)
+if [[ -f "$PLIST_PATH" ]]; then
+  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  log_ok "TTS API LaunchAgent 停止"
 fi
-sudo rm -f /Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist
-log_ok "削除: local.tts-api.plist"
 
-# nginx (ラベル違いも含めて全部消す)
+# 旧形式: system LaunchDaemon
+if [[ -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" ]]; then
+  sudo launchctl bootout system "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" 2>/dev/null || true
+  sudo rm -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
+  log_ok "旧 system LaunchDaemon 削除"
+fi
+
+# nginx 関連 (残骸があれば)
 while IFS= read -r -d '' plist; do
-  label="$(basename "$plist" .plist)"
   sudo launchctl bootout system "$plist" 2>/dev/null || true
   sudo rm -f "$plist"
   log_ok "削除: $plist"
 done < <(find /Library/LaunchDaemons -maxdepth 1 -name '*nginx*.plist' -print0 2>/dev/null)
-
-# ──────────────────────────────────────────────────────────────────
-log_step "nginx サイト設定削除"
-# ──────────────────────────────────────────────────────────────────
-for conf_dir in /opt/homebrew/etc/nginx/servers /usr/local/etc/nginx/servers; do
-  if [[ -f "$conf_dir/tts-api.conf" ]]; then
-    sudo rm -f "$conf_dir/tts-api.conf"
-    log_ok "削除: $conf_dir/tts-api.conf"
-  fi
-done
 
 # ──────────────────────────────────────────────────────────────────
 log_step "ファイル・ディレクトリ削除"
