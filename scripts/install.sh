@@ -225,7 +225,7 @@ if [[ -f "$ENV_FILE" ]]; then
 else
   cat > "$ENV_FILE" <<EOF
 # OSX TTS API — 実行時設定 (自動生成: $(date))
-# 変更後の反映: launchctl kickstart -k gui/$(id -u)/${TTS_DAEMON_LABEL}
+# 変更後の反映: sudo launchctl kickstart -k system/${TTS_DAEMON_LABEL}
 #
 # 設定値の優先順位: plist EnvironmentVariables > このファイル > app/config.py デフォルト
 
@@ -266,14 +266,21 @@ EOF
   log_info ".env を生成しました: $ENV_FILE"
 fi
 
+INSTALL_USER="$(id -un)"
+INSTALL_USER_UID="$(id -u)"
+
 # ──────────────────────────────────────────────────────────────────
 log_step "ランタイムディレクトリの準備"
 # ──────────────────────────────────────────────────────────────────
 sudo mkdir -p "$AUDIO_DIR" "$LOG_DIR"
 sudo touch "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log"
-# root で動作するため root:wheel のまま、755 で全ユーザーが読める
-sudo chown -R root:wheel "$AUDIO_DIR" "$LOG_DIR"
-sudo chmod 755 "$AUDIO_DIR" "$LOG_DIR"
+# 音声ディレクトリはインストールユーザー所有にする。
+# launchctl asuser でユーザー名前空間に委譲された say が書き込めるようにするため。
+sudo chown -R "${INSTALL_USER}:wheel" "$AUDIO_DIR"
+sudo chmod 755 "$AUDIO_DIR"
+# ログは LaunchDaemon (root) が書き込むため root:wheel のまま
+sudo chown -R root:wheel "$LOG_DIR"
+sudo chmod 755 "$LOG_DIR"
 log_info "音声ディレクトリ : $AUDIO_DIR"
 log_info "ログディレクトリ : $LOG_DIR"
 
@@ -283,9 +290,6 @@ log_step "TTS API LaunchDaemon の設定"
 # LaunchDaemon = root で起動してブート時から常駐。
 # say コマンドはユーザーセッションが必要なため、root から
 # "launchctl asuser UID" でインストールユーザーの bootstrap namespace に委譲する。
-
-INSTALL_USER="$(id -un)"
-INSTALL_USER_UID="$(id -u)"
 
 sudo tee "$PLIST_PATH" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

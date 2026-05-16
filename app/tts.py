@@ -119,6 +119,20 @@ async def _run_say(text: str, voice: str | None, rate: int | None, out_path: Pat
         if proc.returncode != 0:
             detail = stderr.decode("utf-8", "replace").strip() or "不明なエラー"
             raise SynthesisError(f"say コマンドが失敗しました: {detail}", 500)
+
+        # say が exit 0 でも空ファイルを出力する場合がある (音声セッション未確立など)
+        try:
+            if out_path.stat().st_size == 0:
+                with contextlib.suppress(OSError):
+                    out_path.unlink(missing_ok=True)
+                raise SynthesisError(
+                    "say が空の出力ファイルを生成しました。"
+                    "音声セッションへのアクセスに失敗している可能性があります"
+                    " (TTS_SAY_USER_UID の設定を確認してください)",
+                    500,
+                )
+        except FileNotFoundError:
+            raise SynthesisError("say が出力ファイルを生成しませんでした", 500)
     finally:
         with contextlib.suppress(OSError):
             await asyncio.to_thread(os.unlink, text_path)

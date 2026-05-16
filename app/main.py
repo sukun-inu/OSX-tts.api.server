@@ -65,9 +65,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# /audio を静的配信としてマウントする。
-# 本番では nginx が同じ /audio/ パスを横取りしてディスクから直接配信するため、
-# このマウントは nginx を介さない直アクセス時のフォールバックとして機能する。
+# /audio を静的配信としてマウントする (FastAPI が直接ディスクから配信する)。
 settings.audio_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=settings.audio_dir), name="audio")
 
