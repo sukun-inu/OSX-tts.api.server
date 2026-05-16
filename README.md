@@ -92,7 +92,7 @@ OSX-tts.api.server/
 
 ```bash
 # GitHub から一発インストール
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/scripts/install.sh | bash
 
 # オプション付き (ポート・音声ディレクトリを変更する例)
 curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- \
@@ -149,6 +149,28 @@ python -m app.main
 # Homebrew nginx (Apple Silicon) の例
 cp nginx/tts-api.conf /opt/homebrew/etc/nginx/servers/tts-api.conf
 nginx -t && nginx -s reload
+```
+
+## 音声ファイルのライフサイクル
+
+生成した音声ファイルは以下の2ルートで自動削除される。ディスクを圧迫しない設計。
+
+| ルート | タイミング | 詳細 |
+|--------|-----------|------|
+| **配信後削除** | ファイル送信完了の約5秒後 | `?mode=file` で FastAPI が直接返した場合。BackgroundTask で `unlink` |
+| **TTL 削除** | 最終アクティビティから60秒後 | nginx 経由の配信は `atime` 更新で「最終アクセス」を追跡。15秒ごとのバックグラウンドが `max(mtime, atime) + 60s` を超えたファイルを削除 |
+
+```
+POST /synthesize?mode=file  →  FastAPI が送信  →  5秒後に削除
+POST /synthesize?mode=json  →  nginx が /audio/ を配信  →  最終アクセスから60秒後に削除
+```
+
+各タイミングは `.env` で調整できる:
+
+```env
+TTS_AUDIO_TTL_SECONDS=60          # 最終アクセスから何秒で消すか
+TTS_CLEANUP_INTERVAL_SECONDS=15   # バックグラウンドの掃除間隔
+TTS_POST_SERVE_DELETE_DELAY=5     # mode=file 配信後の猶予秒数
 ```
 
 ## API クイックリファレンス

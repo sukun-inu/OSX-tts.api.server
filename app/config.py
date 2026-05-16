@@ -45,8 +45,13 @@ class Settings(BaseSettings):
     rate_max: int = 400
 
     # --- キャッシュ・クリーンアップ ---
-    audio_ttl_seconds: int = 3600
-    cleanup_interval_seconds: int = 600
+    # ファイルの最終アクティビティ (生成 or アクセス) から削除までの秒数
+    audio_ttl_seconds: int = 60
+    # クリーンアップの実行間隔 (秒)
+    cleanup_interval_seconds: int = 15
+    # mode=file で配信後にファイルを削除するまでの猶予秒数
+    # (同一パラメータの連続リクエストに備えた短い猶予)
+    post_serve_delete_delay: int = 5
 
     # --- 同時実行・タイムアウト ---
     max_concurrent_synthesis: int = 4

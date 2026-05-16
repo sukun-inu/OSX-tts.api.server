@@ -3,7 +3,7 @@
 # OSX TTS API — インストーラー (macOS)
 #
 # 一発インストール (GitHub から):
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/scripts/install.sh | bash
 #
 # オプション付き:
 #   bash scripts/install.sh --port 8000 --audio-dir /var/audio/tts
@@ -32,7 +32,7 @@ log_caution(){ echo -e "    ${YELLOW}⚠${RESET} $*"; }
 # ──────────────────────────────────────────────────────────────────
 # デフォルト設定 (優先度 2: 環境変数から上書き可)
 # ──────────────────────────────────────────────────────────────────
-REPO_URL="${TTS_REPO_URL:-https://github.com/OWNER/OSX-tts.api.server}"
+REPO_URL="${TTS_REPO_URL:-https://github.com/sukun-inu/OSX-tts.api.server}"
 REPO_BRANCH="${TTS_REPO_BRANCH:-main}"
 
 INSTALL_DIR="${TTS_INSTALL_DIR:-/usr/local/opt/tts-api}"

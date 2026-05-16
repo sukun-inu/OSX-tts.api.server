@@ -67,11 +67,23 @@ def audio_count() -> int:
     )
 
 
-def purge_expired() -> int:
-    """TTL を超過したファイルを削除し、削除件数を返す。
+def _last_activity(stat: object) -> float:
+    """ファイルの最終アクティビティ時刻を返す。
 
+    mtime (書き込み) と atime (読み込み) の新しい方を採用する。
+    nginx が /audio/ を直接配信した場合は atime が更新されるため、
+    ダウンロード完了のタイミングを atime で近似できる。
+    """
+    return max(stat.st_mtime, stat.st_atime)  # type: ignore[union-attr]
+
+
+def purge_expired() -> int:
+    """最終アクティビティから TTL を超過したファイルを削除し、削除件数を返す。
+
+    判定基準: max(mtime, atime) + audio_ttl_seconds < now
+      - mtime: 生成完了時刻
+      - atime: nginx / FastAPI による最終アクセス時刻
     生成途中の一時ファイル (.tmp-*) は mtime が新しいため削除対象にならない。
-    過去に異常終了して残った一時ファイルは TTL 経過後に削除される。
     同期I/O。非同期コンテキストからは asyncio.to_thread 経由で呼ぶこと。
     """
     settings = get_settings()
@@ -82,12 +94,27 @@ def purge_expired() -> int:
     removed = 0
     for f in audio_dir.iterdir():
         try:
-            if f.is_file() and f.stat().st_mtime < cutoff:
+            if f.is_file() and _last_activity(f.stat()) < cutoff:
                 f.unlink()
                 removed += 1
         except FileNotFoundError:
             continue
     return removed
+
+
+async def delete_after_serve(path: Path) -> None:
+    """FastAPI がファイルを送信し終えた後に削除する。
+
+    同一パラメータへの連続リクエストに備えて post_serve_delete_delay 秒だけ
+    待機してから unlink する。すでに削除済みなら何もしない。
+    """
+    delay = get_settings().post_serve_delete_delay
+    await asyncio.sleep(delay)
+    try:
+        path.unlink(missing_ok=True)
+        logger.debug("配信済み音声を削除しました: %s", path.name)
+    except OSError as exc:
+        logger.warning("配信済み音声の削除に失敗しました: %s — %s", path.name, exc)
 
 
 async def cleanup_loop() -> None:

@@ -6,7 +6,7 @@ import contextlib
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -122,6 +122,7 @@ async def voices(
 @app.post("/api/v1/synthesize", response_model=SynthesizeResponse, tags=["tts"])
 async def synthesize(
     req: SynthesizeRequest,
+    background_tasks: BackgroundTasks,
     mode: ResponseMode = Query(
         default=ResponseMode.json,
         description="json=メタデータ(URL含む)を返す / file=音声ファイル本体を返す",
@@ -181,6 +182,9 @@ async def synthesize(
     stat = await asyncio.to_thread(path.stat)
 
     if mode is ResponseMode.file:
+        # 送信完了後に post_serve_delete_delay 秒の猶予を置いて削除する。
+        # BackgroundTask は FastAPI がレスポンス送信を終えた後に実行される。
+        background_tasks.add_task(storage.delete_after_serve, path)
         return FileResponse(
             path,
             media_type=MEDIA_TYPES.get(fmt, "application/octet-stream"),
