@@ -220,7 +220,7 @@ for py in python3.13 python3.12 python3.11; do
 done
 if [[ -z "$PYTHON_BIN" ]]; then
   log_warn "Python 3.11+ が見つかりません。インストールします..."
-  brew install python@3.12
+  brew install python@3.12 </dev/null
   PYTHON_BIN="python3.12"
 fi
 # venv はメジャー.マイナーが変わると壊れるため、Python 自体の upgrade はしない
@@ -230,12 +230,12 @@ log_info "Python: $($PYTHON_BIN --version)"
 # nginx — 既存なら upgrade、なければ install
 if command -v nginx &>/dev/null; then
   log_info "nginx を最新版に更新します..."
-  brew upgrade nginx 2>/dev/null \
+  brew upgrade nginx </dev/null 2>/dev/null \
     && log_ok "nginx を更新しました" \
     || log_ok "nginx は既に最新版です"
 else
   log_warn "nginx が見つかりません。インストールします..."
-  brew install nginx
+  brew install nginx </dev/null
 fi
 NGINX_BIN="$(command -v nginx)"
 log_info "nginx: $($NGINX_BIN -v 2>&1)"
@@ -250,12 +250,12 @@ log_info "nginx 設定ディレクトリ: $NGINX_CONF_DIR"
 
 # git — 既存なら upgrade、なければ install
 if command -v git &>/dev/null; then
-  brew upgrade git 2>/dev/null \
+  brew upgrade git </dev/null 2>/dev/null \
     && log_ok "git を更新しました" \
     || log_ok "git は既に最新版です"
 else
   log_warn "git が見つかりません。インストールします..."
-  brew install git
+  brew install git </dev/null
 fi
 log_info "git: $(git --version)"
 
@@ -264,12 +264,12 @@ log_step "リポジトリの取得"
 # ──────────────────────────────────────────────────────────────────
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   log_info "既存インストールを更新します: $INSTALL_DIR"
-  git -C "$INSTALL_DIR" fetch origin
-  git -C "$INSTALL_DIR" checkout "$REPO_BRANCH"
-  git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH"
+  git -C "$INSTALL_DIR" fetch origin </dev/null
+  git -C "$INSTALL_DIR" checkout "$REPO_BRANCH" </dev/null
+  git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH" </dev/null
 else
   sudo mkdir -p "$(dirname "$INSTALL_DIR")"
-  sudo git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  sudo git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR" </dev/null
   sudo chown -R "$(id -un):$(id -gn)" "$INSTALL_DIR"
 fi
 log_info "インストール先: $INSTALL_DIR"
@@ -281,8 +281,8 @@ if [[ ! -d "$INSTALL_DIR/.venv" ]]; then
   log_info "仮想環境を作成します..."
   "$PYTHON_BIN" -m venv "$INSTALL_DIR/.venv"
 fi
-"$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
+"$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip </dev/null
+"$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt" </dev/null
 log_info "依存パッケージのインストール完了"
 
 # ──────────────────────────────────────────────────────────────────
