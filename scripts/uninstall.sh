@@ -24,7 +24,7 @@ LOG_DIR="${TTS_LOG_DIR:-/usr/local/var/log/tts-api}"
 RUN_DIR="${TTS_RUN_DIR:-/usr/local/var/run/tts-api}"
 
 TTS_DAEMON_LABEL="local.tts-api"
-PLIST_PATH="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+PLIST_PATH="/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 
 KEEP_AUDIO=false
 YES=false
@@ -63,7 +63,7 @@ if [[ "$YES" == "false" ]]; then
   echo "以下を削除します:"
   echo "  $INSTALL_DIR                            (アプリ本体 + .venv)"
   echo "  $LOG_DIR                                (ログ)"
-  echo "  $PLIST_PATH"
+  echo "  $PLIST_PATH  (LaunchDaemon)"
   [[ "$KEEP_AUDIO" == "false" ]] && \
     echo "  $AUDIO_DIR                              (音声ファイル)"
   echo ""
@@ -79,18 +79,19 @@ sudo -v
 log_step "TTS API LaunchAgent の停止・削除"
 # ──────────────────────────────────────────────────────────────────
 
-# LaunchAgent (現行)
+# LaunchDaemon (現行)
 if [[ -f "$PLIST_PATH" ]]; then
-  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-  log_info "TTS API LaunchAgent を停止しました"
+  sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+  sudo rm -f "$PLIST_PATH"
+  log_info "TTS API LaunchDaemon を停止しました"
 fi
 
-# 旧形式: system LaunchDaemon (v1 からの移行)
-if [[ -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" ]]; then
-  sudo launchctl bootout system "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" 2>/dev/null || true
-  sudo rm -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
-  log_info "旧 system LaunchDaemon を削除しました"
+# 旧形式: user LaunchAgent からの移行
+OLD_AGENT="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+if [[ -f "$OLD_AGENT" ]]; then
+  launchctl bootout "gui/$UID" "$OLD_AGENT" 2>/dev/null || true
+  rm -f "$OLD_AGENT"
+  log_info "旧 LaunchAgent を削除しました"
 fi
 
 # ──────────────────────────────────────────────────────────────────

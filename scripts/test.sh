@@ -21,7 +21,7 @@ AUDIO_DIR="/usr/local/var/audio/tts-api"
 LOG_DIR="/usr/local/var/log/tts-api"
 RUN_DIR="/usr/local/var/run/tts-api"
 TTS_DAEMON_LABEL="local.tts-api"
-PLIST_PATH="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+PLIST_PATH="/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 
 if [[ "$(uname)" != "Darwin" ]]; then
   echo "macOS 専用です"; exit 1
@@ -35,18 +35,19 @@ sudo -v
 log_step "LaunchAgent 停止・削除"
 # ──────────────────────────────────────────────────────────────────
 
-# TTS API LaunchAgent (現行)
+# TTS API LaunchDaemon (現行)
 if [[ -f "$PLIST_PATH" ]]; then
-  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-  log_ok "TTS API LaunchAgent 停止"
+  sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+  sudo rm -f "$PLIST_PATH"
+  log_ok "TTS API LaunchDaemon 停止"
 fi
 
-# 旧形式: system LaunchDaemon
-if [[ -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" ]]; then
-  sudo launchctl bootout system "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" 2>/dev/null || true
-  sudo rm -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
-  log_ok "旧 system LaunchDaemon 削除"
+# 旧形式: user LaunchAgent
+OLD_AGENT="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+if [[ -f "$OLD_AGENT" ]]; then
+  launchctl bootout "gui/$UID" "$OLD_AGENT" 2>/dev/null || true
+  rm -f "$OLD_AGENT"
+  log_ok "旧 LaunchAgent 削除"
 fi
 
 # nginx 関連 (残骸があれば)

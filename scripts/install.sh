@@ -45,7 +45,7 @@ API_DEFAULT_VOICE="${TTS_DEFAULT_VOICE:-}"
 API_DEFAULT_FORMAT="${TTS_DEFAULT_FORMAT:-m4a}"
 
 TTS_DAEMON_LABEL="local.tts-api"
-PLIST_DIR="$HOME/Library/LaunchAgents"
+PLIST_DIR="/Library/LaunchDaemons"
 PLIST_PATH="$PLIST_DIR/${TTS_DAEMON_LABEL}.plist"
 
 # ──────────────────────────────────────────────────────────────────
@@ -118,18 +118,19 @@ trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null || true' EXIT
 log_step "既存インストールのクリーンアップ"
 # ──────────────────────────────────────────────────────────────────
 
-# --- [1] 既存 TTS LaunchAgent (同ラベル) → bootout して plist を上書き ---
+# --- [1] 既存 TTS LaunchDaemon (同ラベル) → bootout して plist を上書き ---
 if [[ -f "$PLIST_PATH" ]]; then
-  launchctl bootout "gui/$UID" "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-  log_ok "既存 TTS API LaunchAgent を停止しました"
+  sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+  sudo rm -f "$PLIST_PATH"
+  log_ok "既存 TTS API LaunchDaemon を停止しました"
 fi
 
-# --- [2] 旧形式: system LaunchDaemon (v1 からの移行) ---
-if [[ -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" ]]; then
-  sudo launchctl bootout system "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist" 2>/dev/null || true
-  sudo rm -f "/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
-  log_ok "旧 system LaunchDaemon を削除しました"
+# --- [2] 旧形式: user LaunchAgent からの移行 ---
+OLD_AGENT="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+if [[ -f "$OLD_AGENT" ]]; then
+  launchctl bootout "gui/$UID" "$OLD_AGENT" 2>/dev/null || true
+  rm -f "$OLD_AGENT"
+  log_ok "旧 LaunchAgent を削除しました (LaunchDaemon へ移行)"
 fi
 
 # --- [3] API ポートの占有状況 ---
@@ -270,20 +271,24 @@ log_step "ランタイムディレクトリの準備"
 # ──────────────────────────────────────────────────────────────────
 sudo mkdir -p "$AUDIO_DIR" "$LOG_DIR"
 sudo touch "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log"
-# LaunchAgent はログインユーザーとして動作するためオーナーをユーザーに変更
-sudo chown -R "$(id -un):$(id -gn)" "$AUDIO_DIR" "$LOG_DIR"
+# LaunchDaemon は root が起動し kawasaki として動作するため、
+# ログ・音声ディレクトリは kawasaki が書き込めるよう chown する
+INSTALL_USER="$(id -un)"
+sudo chown -R "${INSTALL_USER}:wheel" "$AUDIO_DIR" "$LOG_DIR"
 sudo chmod 755 "$AUDIO_DIR" "$LOG_DIR"
 log_info "音声ディレクトリ : $AUDIO_DIR"
 log_info "ログディレクトリ : $LOG_DIR"
 
 # ──────────────────────────────────────────────────────────────────
-log_step "TTS API LaunchAgent の設定"
+log_step "TTS API LaunchDaemon の設定"
 # ──────────────────────────────────────────────────────────────────
-# LaunchAgent (~/Library/LaunchAgents) = ログインユーザーのセッションで動作。
-# say コマンドがユーザー音声エンジンにアクセスできる。sudo 不要。
+# LaunchDaemon (/Library/LaunchDaemons) = ブート時に自動起動。
+# UserName でインストールユーザーとして実行し、
+# SessionCreate でユーザー音声エンジン (say) にアクセスできるセッションを生成。
 
-mkdir -p "$PLIST_DIR"
-cat > "$PLIST_PATH" <<PLIST
+INSTALL_USER="$(id -un)"
+
+sudo tee "$PLIST_PATH" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
 "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -291,6 +296,16 @@ cat > "$PLIST_PATH" <<PLIST
 <dict>
     <key>Label</key>
     <string>${TTS_DAEMON_LABEL}</string>
+
+    <!--
+        UserName: kawasaki ユーザーとして実行 (say コマンドの権限確保)
+        SessionCreate: ブート時でも音声エンジンが使えるセッションを生成
+    -->
+    <key>UserName</key>
+    <string>${INSTALL_USER}</string>
+
+    <key>SessionCreate</key>
+    <true/>
 
     <key>ProgramArguments</key>
     <array>
@@ -326,11 +341,13 @@ cat > "$PLIST_PATH" <<PLIST
 </plist>
 PLIST
 
-log_info "LaunchAgent: $PLIST_PATH"
-launchctl bootstrap "gui/$UID" "$PLIST_PATH"
-launchctl enable "gui/$UID/${TTS_DAEMON_LABEL}"
-launchctl kickstart -k "gui/$UID/${TTS_DAEMON_LABEL}"
-log_info "TTS API LaunchAgent 起動完了"
+sudo chown root:wheel "$PLIST_PATH"
+sudo chmod 644 "$PLIST_PATH"
+log_info "LaunchDaemon: $PLIST_PATH"
+sudo launchctl bootstrap system "$PLIST_PATH"
+sudo launchctl enable system/${TTS_DAEMON_LABEL}
+sudo launchctl kickstart -k system/${TTS_DAEMON_LABEL}
+log_info "TTS API LaunchDaemon 起動完了"
 
 # ──────────────────────────────────────────────────────────────────
 log_step "動作確認"
@@ -339,7 +356,7 @@ sleep 3
 
 echo ""
 echo "===== launchd: tts-api ====="
-launchctl print "gui/$UID/${TTS_DAEMON_LABEL}" | head -30 || true
+sudo launchctl print system/${TTS_DAEMON_LABEL} | head -30 || true
 
 echo ""
 echo "===== リッスンポート ====="
@@ -368,10 +385,10 @@ echo "  音声ファイル       : $AUDIO_DIR/"
 echo ""
 echo "管理コマンド:"
 echo "  # 状態確認"
-echo "  launchctl print gui/$UID/$TTS_DAEMON_LABEL"
+echo "  sudo launchctl print system/$TTS_DAEMON_LABEL"
 echo ""
 echo "  # 再起動"
-echo "  launchctl kickstart -k gui/$UID/$TTS_DAEMON_LABEL"
+echo "  sudo launchctl kickstart -k system/$TTS_DAEMON_LABEL"
 echo ""
 echo "  # ログ確認"
 echo "  tail -f $LOG_DIR/stderr.log"
