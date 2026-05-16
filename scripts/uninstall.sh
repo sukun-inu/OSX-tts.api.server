@@ -75,7 +75,7 @@ if [[ "$YES" == "false" ]]; then
   [[ "$KEEP_AUDIO" == "false" ]] && \
     echo "  $AUDIO_DIR                              (音声ファイル)"
   echo ""
-  read -r -p "続けますか? [y/N] " reply
+  read -r -p "続けますか? [y/N] " reply </dev/tty
   if [[ ! "$reply" =~ ^[Yy]$ ]]; then
     echo "キャンセルしました"
     exit 0
