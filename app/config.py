@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # --- 音声生成の既定値 ---
     default_voice: str = ""  # 空 = say のシステム既定音声
     default_rate: int = 0  # 0 = say の既定速度
-    default_format: str = "m4a"
+    default_format: str = "wav"
 
     # --- 入力制限 ---
     max_text_length: int = 2000

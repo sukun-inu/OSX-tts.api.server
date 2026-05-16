@@ -1,35 +1,112 @@
 #!/usr/bin/env bash
 # ================================================================
-# OSX TTS API — アップデートスクリプト (macOS)
+# OSX TTS API — アップデート / リセットスクリプト (macOS)
 #
 # 使い方:
-#   bash /usr/local/opt/tts-api/scripts/update.sh
+#   bash /usr/local/opt/tts-api/scripts/update.sh           # 通常アップデート
+#   bash /usr/local/opt/tts-api/scripts/update.sh --reset   # フルクリーンアップ
 #   curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/scripts/update.sh | bash
 #
-# 実行内容:
+# 通常アップデート実行内容:
 #   1. git pull でコードを最新化
 #   2. pip install で依存パッケージを更新
-#   3. LaunchDaemon を再起動
-#   4. ヘルスチェック
+#   3. 音声ディレクトリの権限を確認・修正
+#   4. LaunchDaemon を再起動
+#   5. ヘルスチェック
+#
+# --reset 実行内容:
+#   LaunchDaemon 停止 → 全ファイル削除 → 再インストール案内
 # ================================================================
 set -euo pipefail
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 BOLD='\033[1m'; RESET='\033[0m'
-log_info() { echo -e "${GREEN}[+]${RESET} $*"; }
-log_warn() { echo -e "${YELLOW}[!]${RESET} $*"; }
-log_error(){ echo -e "${RED}[✗]${RESET} $*" >&2; }
-log_step() { echo -e "\n${BOLD}━━━━ $* ━━━━${RESET}"; }
+log_info()  { echo -e "${GREEN}[+]${RESET} $*"; }
+log_warn()  { echo -e "${YELLOW}[!]${RESET} $*"; }
+log_error() { echo -e "${RED}[✗]${RESET} $*" >&2; }
+log_step()  { echo -e "\n${BOLD}━━━━ $* ━━━━${RESET}"; }
 
 INSTALL_DIR="${TTS_INSTALL_DIR:-/usr/local/opt/tts-api}"
 AUDIO_DIR="${TTS_AUDIO_DIR:-/usr/local/var/audio/tts-api}"
+LOG_DIR="${TTS_LOG_DIR:-/usr/local/var/log/tts-api}"
+RUN_DIR="${TTS_RUN_DIR:-/usr/local/var/run/tts-api}"
 TTS_DAEMON_LABEL="local.tts-api"
+PLIST_PATH="/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 API_PORT="${TTS_PORT:-8000}"
+MODE="update"
+
+# ──────────────────────────────────────────────────────────────────
+# 引数解析
+# ──────────────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --reset|-r)  MODE="reset"; shift ;;
+    --help|-h)
+      cat <<HELP
+Usage: update.sh [OPTIONS]
+
+OPTIONS:
+  (オプションなし)   コードを最新化して LaunchDaemon を再起動する
+  --reset / -r       すべて削除して白紙に戻す (再インストール用)
+  --help  / -h       このヘルプを表示
+HELP
+      exit 0 ;;
+    *) log_error "不明なオプション: $1  (--help で使い方を確認)"; exit 1 ;;
+  esac
+done
 
 if [[ "$(uname)" != "Darwin" ]]; then
   log_error "このスクリプトは macOS 専用です"; exit 1
 fi
 
+# ──────────────────────────────────────────────────────────────────
+# --reset モード: フルクリーンアップ
+# ──────────────────────────────────────────────────────────────────
+if [[ "$MODE" == "reset" ]]; then
+  echo -e "${RED}${BOLD}=== フルクリーンアップ (--reset) ===${RESET}"
+  echo "  削除対象: $INSTALL_DIR / $AUDIO_DIR / $LOG_DIR"
+  echo ""
+  sudo -v
+
+  log_step "LaunchDaemon 停止・削除"
+
+  if [[ -f "$PLIST_PATH" ]]; then
+    sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+    sudo rm -f "$PLIST_PATH"
+    log_info "TTS API LaunchDaemon を停止しました"
+  else
+    log_warn "LaunchDaemon plist が見つかりません (スキップ)"
+  fi
+
+  # 旧形式: user LaunchAgent (移行前の古いインストール)
+  OLD_AGENT="$HOME/Library/LaunchAgents/${TTS_DAEMON_LABEL}.plist"
+  if [[ -f "$OLD_AGENT" ]]; then
+    launchctl bootout "gui/$UID" "$OLD_AGENT" 2>/dev/null || true
+    rm -f "$OLD_AGENT"
+    log_info "旧 LaunchAgent を削除しました"
+  fi
+
+  log_step "ファイル・ディレクトリ削除"
+  for target in "$INSTALL_DIR" "$LOG_DIR" "$RUN_DIR" "$AUDIO_DIR"; do
+    if [[ -e "$target" ]]; then
+      sudo rm -rf "$target"
+      log_info "削除: $target"
+    else
+      log_warn "スキップ (存在しない): $target"
+    fi
+  done
+
+  echo ""
+  log_info "クリーンアップ完了。install.sh を再実行してください:"
+  echo ""
+  echo "  curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/scripts/install.sh | bash"
+  echo ""
+  exit 0
+fi
+
+# ──────────────────────────────────────────────────────────────────
+# 通常アップデートモード
+# ──────────────────────────────────────────────────────────────────
 if [[ ! -d "$INSTALL_DIR/.git" ]]; then
   log_error "インストールディレクトリが見つかりません: $INSTALL_DIR"
   log_error "先に install.sh を実行してください"

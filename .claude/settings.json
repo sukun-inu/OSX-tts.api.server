@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Kawasaki/.claude/projects/c--Users-Kawasaki-Desktop-Develop-OSX-tts-api-server/memory/**)"
+    ]
+  }
+}
