@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile app/__init__.py app/config.py app/schemas.py app/tts.py app/storage.py app/main.py)",
+      "Bash(rm -rf \"C:/Users/Kawasaki/AppData/Local/Temp/tts-venv-check\" && rm -rf \"C:/Users/Kawasaki/Desktop/Develop/OSX-tts.api.server/app/__pycache__\" && echo \"cleanup done\")"
+    ]
+  }
+}

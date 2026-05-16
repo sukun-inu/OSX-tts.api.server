@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 環境設定
+.env
+
+# 生成された音声ファイル
+audio/
+
+# macOS
+.DS_Store
+
+# エディタ
+.vscode/
+.idea/
