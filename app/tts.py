@@ -45,14 +45,19 @@ def say_available() -> bool:
 
 
 def _say_cmd() -> list[str]:
-    """say コマンドをユーザーセッション経由で実行するコマンドリストを返す。
+    """say コマンドを適切なコンテキストで実行するコマンドリストを返す。
 
-    LaunchDaemon コンテキストでは直接 say を呼ぶと CoreSpeech が音声チャンネルを
-    開けない (-915)。launchctl asuser UID でユーザーの bootstrap namespace に委譲
-    することで、ユーザーセッションの音声エンジンにアクセスできるようになる。
-    LaunchAgent や開発実行時でも同じ UID になるため副作用はない。
+    TTS_SAY_USER_UID が設定されている場合 (root LaunchDaemon):
+      launchctl asuser UID /usr/bin/say
+      → root から対象ユーザーの bootstrap namespace に委譲し、
+        ユーザーセッションの音声エンジンにアクセスする。
+    未設定の場合 (開発時 / LaunchAgent):
+      /usr/bin/say を直接呼ぶ (既にユーザーセッション内)。
     """
-    return ["/bin/launchctl", "asuser", str(os.getuid()), "/usr/bin/say"]
+    uid = os.environ.get("TTS_SAY_USER_UID", "").strip()
+    if uid:
+        return ["/bin/launchctl", "asuser", uid, "/usr/bin/say"]
+    return ["/usr/bin/say"]
 
 
 @cache

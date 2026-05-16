@@ -271,10 +271,8 @@ log_step "ランタイムディレクトリの準備"
 # ──────────────────────────────────────────────────────────────────
 sudo mkdir -p "$AUDIO_DIR" "$LOG_DIR"
 sudo touch "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log"
-# LaunchDaemon は root が起動し kawasaki として動作するため、
-# ログ・音声ディレクトリは kawasaki が書き込めるよう chown する
-INSTALL_USER="$(id -un)"
-sudo chown -R "${INSTALL_USER}:wheel" "$AUDIO_DIR" "$LOG_DIR"
+# root で動作するため root:wheel のまま、755 で全ユーザーが読める
+sudo chown -R root:wheel "$AUDIO_DIR" "$LOG_DIR"
 sudo chmod 755 "$AUDIO_DIR" "$LOG_DIR"
 log_info "音声ディレクトリ : $AUDIO_DIR"
 log_info "ログディレクトリ : $LOG_DIR"
@@ -282,11 +280,12 @@ log_info "ログディレクトリ : $LOG_DIR"
 # ──────────────────────────────────────────────────────────────────
 log_step "TTS API LaunchDaemon の設定"
 # ──────────────────────────────────────────────────────────────────
-# LaunchDaemon (/Library/LaunchDaemons) = ブート時に自動起動。
-# UserName でインストールユーザーとして実行し、
-# SessionCreate でユーザー音声エンジン (say) にアクセスできるセッションを生成。
+# LaunchDaemon = root で起動してブート時から常駐。
+# say コマンドはユーザーセッションが必要なため、root から
+# "launchctl asuser UID" でインストールユーザーの bootstrap namespace に委譲する。
 
 INSTALL_USER="$(id -un)"
+INSTALL_USER_UID="$(id -u)"
 
 sudo tee "$PLIST_PATH" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -298,14 +297,10 @@ sudo tee "$PLIST_PATH" >/dev/null <<PLIST
     <string>${TTS_DAEMON_LABEL}</string>
 
     <!--
-        UserName: kawasaki ユーザーとして実行 (say コマンドの権限確保)
-        SessionCreate: ブート時でも音声エンジンが使えるセッションを生成
+        root で動作させることで launchctl asuser による
+        ユーザーセッション委譲が可能になる (非 root では asuser 不可)。
+        TTS_SAY_USER_UID を参照して say をユーザーセッションで実行する。
     -->
-    <key>UserName</key>
-    <string>${INSTALL_USER}</string>
-
-    <key>SessionCreate</key>
-    <true/>
 
     <key>ProgramArguments</key>
     <array>
@@ -320,10 +315,11 @@ sudo tee "$PLIST_PATH" >/dev/null <<PLIST
     <!-- plist の EnvironmentVariables は .env より優先される -->
     <key>EnvironmentVariables</key>
     <dict>
-        <key>TTS_HOST</key>         <string>${API_HOST}</string>
-        <key>TTS_PORT</key>         <string>${API_PORT}</string>
-        <key>TTS_AUDIO_DIR</key>    <string>${AUDIO_DIR}</string>
-        <key>PYTHONUNBUFFERED</key> <string>1</string>
+        <key>TTS_HOST</key>            <string>${API_HOST}</string>
+        <key>TTS_PORT</key>            <string>${API_PORT}</string>
+        <key>TTS_AUDIO_DIR</key>       <string>${AUDIO_DIR}</string>
+        <key>PYTHONUNBUFFERED</key>    <string>1</string>
+        <key>TTS_SAY_USER_UID</key>    <string>${INSTALL_USER_UID}</string>
     </dict>
 
     <key>RunAtLoad</key>
