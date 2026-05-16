@@ -4,6 +4,13 @@
 - すべての外部コマンドは ``create_subprocess_exec`` で実行し、シェルを介さない。
 - 読み上げテキストはコマンド引数ではなく一時ファイル経由 (``say -f``) で渡し、
   引数解釈やコマンドインジェクションのリスクを排除する。
+
+フォーマット変換の方針:
+- say は常に AIFF で出力する (wav/m4a を直接指定すると "fmt?" エラーになる macOS がある)。
+- aiff  → say の出力をそのまま使用
+- wav   → afconvert (macOS 組み込み) で AIFF → WAV 変換
+- m4a   → afconvert で AIFF → M4A/AAC 変換
+- mp3   → ffmpeg で AIFF → MP3 変換
 """
 from __future__ import annotations
 
@@ -21,7 +28,7 @@ from .schemas import Voice
 
 logger = logging.getLogger(__name__)
 
-# 同時に実行する say / ffmpeg プロセス数を制限するセマフォ
+# 同時に実行する say / afconvert / ffmpeg プロセス数を制限するセマフォ
 _semaphore = asyncio.Semaphore(get_settings().max_concurrent_synthesis)
 
 # 音声一覧のキャッシュ (say -v '?' の結果はほぼ不変)
@@ -83,10 +90,7 @@ def _cleanup_temps(*paths: Path | None) -> None:
 
 
 async def _run_say(text: str, voice: str | None, rate: int | None, out_path: Path) -> None:
-    """テキストを say に渡し out_path へ音声を書き出す。
-
-    出力フォーマットは out_path の拡張子 (.aiff / .wav / .m4a) で決まる。
-    """
+    """テキストを say に渡し out_path (必ず .aiff) へ音声を書き出す。"""
     if not say_available():
         raise SynthesisError("say コマンドが見つかりません (macOS 上でのみ動作します)", 503)
 
@@ -138,6 +142,41 @@ async def _run_say(text: str, voice: str | None, rate: int | None, out_path: Pat
             await asyncio.to_thread(os.unlink, text_path)
 
 
+async def _run_afconvert(src: Path, dst: Path, fmt: str) -> None:
+    """afconvert (macOS 組み込み) で src の AIFF を dst に変換する。
+
+    wav  → WAVE コンテナ / 16-bit リニア PCM / モノラル
+    m4a  → M4A コンテナ / AAC 128 kbps / モノラル
+    """
+    _fmt_args: dict[str, list[str]] = {
+        "wav": ["-f", "WAVE", "-d", "LEI16", "-c", "1"],
+        "m4a": ["-f", "m4af", "-d", "aac",  "-b", "128000", "-c", "1"],
+    }
+    extra = _fmt_args.get(fmt)
+    if extra is None:
+        raise SynthesisError(f"afconvert は {fmt} フォーマットをサポートしていません", 500)
+
+    args = ["/usr/bin/afconvert"] + extra + [str(src), str(dst)]
+    async with _semaphore:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=get_settings().synthesis_timeout_seconds
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise SynthesisError(f"{fmt} 変換がタイムアウトしました", 504)
+
+    if proc.returncode != 0:
+        detail = stderr.decode("utf-8", "replace").strip() or "不明なエラー"
+        raise SynthesisError(f"afconvert 変換に失敗しました ({fmt}): {detail}", 500)
+
+
 async def _run_ffmpeg(src: Path, dst: Path) -> None:
     """ffmpeg で src を mp3 (dst) に変換する。"""
     settings = get_settings()
@@ -185,21 +224,28 @@ async def synthesize(
     ブロッキングなファイル操作はスレッドプールへ退避する。
     """
     await asyncio.to_thread(out_path.parent.mkdir, parents=True, exist_ok=True)
-    # mp3 は say で直接生成できないため、一旦 aiff を作って ffmpeg で変換する
-    say_suffix = "aiff" if fmt == "mp3" else fmt
-    tmp_say = out_path.parent / f".tmp-{os.urandom(8).hex()}.{say_suffix}"
-    tmp_mp3: Path | None = None
+
+    # say は常に AIFF で出力する (wav/m4a を直接指定すると失敗する macOS がある)
+    tmp_aiff = out_path.parent / f".tmp-{os.urandom(8).hex()}.aiff"
+    tmp_out: Path | None = None
     try:
-        await _run_say(text, voice, rate, tmp_say)
-        if fmt == "mp3":
-            tmp_mp3 = out_path.parent / f".tmp-{os.urandom(8).hex()}.mp3"
-            await _run_ffmpeg(tmp_say, tmp_mp3)
-            await asyncio.to_thread(os.replace, tmp_mp3, out_path)
-            tmp_mp3 = None
+        await _run_say(text, voice, rate, tmp_aiff)
+
+        if fmt == "aiff":
+            await asyncio.to_thread(os.replace, tmp_aiff, out_path)
+        elif fmt == "mp3":
+            tmp_out = out_path.parent / f".tmp-{os.urandom(8).hex()}.mp3"
+            await _run_ffmpeg(tmp_aiff, tmp_out)
+            await asyncio.to_thread(os.replace, tmp_out, out_path)
+            tmp_out = None
         else:
-            await asyncio.to_thread(os.replace, tmp_say, out_path)
+            # wav / m4a: afconvert で変換
+            tmp_out = out_path.parent / f".tmp-{os.urandom(8).hex()}.{fmt}"
+            await _run_afconvert(tmp_aiff, tmp_out, fmt)
+            await asyncio.to_thread(os.replace, tmp_out, out_path)
+            tmp_out = None
     finally:
-        await asyncio.to_thread(_cleanup_temps, tmp_say, tmp_mp3)
+        await asyncio.to_thread(_cleanup_temps, tmp_aiff, tmp_out)
 
 
 def _parse_voices(output: str) -> list[Voice]:
