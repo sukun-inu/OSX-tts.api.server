@@ -19,82 +19,7 @@ HTTP でテキストを受け取って音声ファイルを生成し、FastAPI �
 > Windows 上ではコード編集はできるが `say` が無いため音声生成は動作しない。
 > サーバー本体は macOS で実行すること。
 
-## ディレクトリ構成
-
-### リポジトリ
-
-```
-OSX-tts.api.server/
-├── app/                  FastAPI アプリケーション
-│   ├── __init__.py
-│   ├── config.py         設定 (環境変数)
-│   ├── schemas.py        リクエスト/レスポンススキーマ
-│   ├── tts.py            say / ffmpeg ラッパー
-│   ├── storage.py        音声ファイル管理・キャッシュ
-│   └── main.py           エンドポイント定義
-├── docs/
-│   └── SPEC.md           仕様書
-├── scripts/
-│   ├── install.sh        本番インストーラー (macOS)
-│   ├── update.sh         アップデートスクリプト
-│   ├── uninstall.sh      アンインストーラー
-│   ├── test.sh           全クリーンアップ（再インストール用）
-│   └── start.sh          開発用 起動スクリプト
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
-### 本番インストール後のディレクトリ配置
-
-```
-/usr/local/opt/tts-api/              ← アプリ本体 (git clone 先)
-├── app/
-├── scripts/
-├── requirements.txt
-├── .env                             ← 実行時設定 (install.sh が自動生成)
-└── .venv/                           ← Python 仮想環境
-
-/usr/local/var/audio/tts-api/        ← 生成音声ファイル (FastAPI が直接配信)
-/usr/local/var/log/tts-api/          ← TTS API ログ (stdout/stderr)
-
-/Library/LaunchDaemons/
-└── local.tts-api.plist              ← TTS API 常駐デーモン (root で起動)
-```
-
-## アーキテクチャ概要
-
-```
-クライアント (ブラウザ / PowerShell / Discord bot)
-        │
-        │ POST /api/v1/synthesize
-        ▼
- FastAPI (uvicorn) ─── root LaunchDaemon として起動
-        │                        │
-        │ launchctl asuser UID   │ GET /audio/{id}.{ext}
-        ▼                        │ (StaticFiles で直接配信)
-  say コマンド                   │
-  (ユーザーセッション内で実行)    │
-        │                        │
-        ▼                        │
- /usr/local/var/audio/tts-api/ ──┘
-```
-
-**ポイント**: デーモンは root で動作し、`say` コマンドのみ `launchctl asuser UID` を
-通じてインストールユーザーの音声セッション (CoreSpeech) へ委譲する。
-これにより、ログイン不要でブート直後から `say` が音声を生成できる。
-
-## 設定値の優先順位
-
-| 優先度 | 方法 | 場所 / 例 |
-|--------|------|-----------|
-| 1 (最高) | **CLI オプション** (install 時のみ) | `--port 9000` |
-| 2 | **環境変数** | `TTS_PORT=9000 bash install.sh` |
-| 3 | **LaunchDaemon の EnvironmentVariables** | `/Library/LaunchDaemons/local.tts-api.plist` |
-| 4 | **.env ファイル** | `/usr/local/opt/tts-api/.env` |
-| 5 (最低) | **app/config.py のデフォルト値** | コード内の初期値 |
-
-> **通常の設定変更**: `.env` を直接編集 → `sudo launchctl kickstart -k system/local.tts-api`
+---
 
 ## セットアップ & 起動
 
@@ -141,47 +66,7 @@ cp .env.example .env
 
 起動後、API ドキュメント (Swagger UI) を http://127.0.0.1:8000/docs で確認できる。
 
-## Windows からの音声ダウンロード
-
-Mac を TTS サーバーとして LAN 上に置き、Windows から音声を取得する例。
-
-```powershell
-# Mac の LAN IP に合わせて変更
-$mac = "http://192.168.1.50:8000"
-
-# mode=file で音声ファイルを直接ダウンロード (推奨)
-Invoke-WebRequest -Uri "$mac/api/v1/synthesize?mode=file" `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body '{"text": "こんにちは", "voice": "Kyoko", "format": "wav"}' `
-  -OutFile "audio.wav"
-
-# または: JSON でメタデータを取得してから URL でダウンロード
-$resp = Invoke-RestMethod -Uri "$mac/api/v1/synthesize" `
-  -Method Post -ContentType "application/json" `
-  -Body '{"text": "こんにちは", "voice": "Kyoko", "format": "wav"}'
-Invoke-WebRequest -Uri "$mac$($resp.url)" -OutFile "audio.wav"
-```
-
-> **フォーマット推奨**: Windows で確実に再生するには `"format": "wav"` を指定する。
-> `m4a` はコーデックが無いと再生できない場合がある。
-
-## 音声ファイルのライフサイクル
-
-生成した音声ファイルは自動削除される。ディスクを圧迫しない設計。
-
-| ルート | タイミング | 詳細 |
-|--------|-----------|------|
-| **配信後削除** | ファイル送信完了の約5秒後 | `?mode=file` で FastAPI が直接返した場合 |
-| **TTL 削除** | 最終アクティビティから60秒後 | 15秒ごとのバックグラウンドが `max(mtime, atime) + 60s` を超えたファイルを削除 |
-
-各タイミングは `.env` で調整できる:
-
-```env
-TTS_AUDIO_TTL_SECONDS=60          # 最終アクセスから何秒で消すか
-TTS_CLEANUP_INTERVAL_SECONDS=15   # バックグラウンドの掃除間隔
-TTS_POST_SERVE_DELETE_DELAY=5     # mode=file 配信後の猶予秒数
-```
+---
 
 ## API クイックリファレンス
 
@@ -228,3 +113,13 @@ curl -X POST "http://127.0.0.1:8000/api/v1/synthesize?mode=file" \
 ```bash
 curl "http://127.0.0.1:8000/api/v1/voices?locale=ja"
 ```
+
+---
+
+## ドキュメント
+
+| | |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 全体構成、設定値の優先順位、音声ファイルのライフサイクル |
+| [docs/STRUCTURE.md](docs/STRUCTURE.md) | リポジトリと本番インストール後のディレクトリ配置 |
+| [docs/CLIENTS.md](docs/CLIENTS.md) | Windows・ブラウザ等からの音声ダウンロード |
