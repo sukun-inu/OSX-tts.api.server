@@ -801,10 +801,10 @@ sudo launchctl kickstart -k system/local.tts-api
 | 要件 | 必須 | 用途 |
 |------|------|------|
 | macOS 12 以上 | ✓ | `say`・`afconvert` が必要 |
-| Homebrew | ✓ | Python のインストールに使用 |
+| Homebrew **または** MacPorts | ✓ | Python / ffmpeg のインストールに使用 (どちらか一方) |
 | Python 3.11 以上 | ✓ | `install.sh` が自動インストール |
 | sudo 権限 | ✓ | `/usr/local/` への書き込み・LaunchDaemon 登録 |
-| ffmpeg | | `mp3` 出力時のみ。`brew install ffmpeg` |
+| ffmpeg | | `mp3` 出力時のみ。`brew install ffmpeg` / `sudo port install ffmpeg` |
 
 ### 11.2 一発インストール
 
@@ -1044,7 +1044,7 @@ async def speak(vc: discord.VoiceClient, text: str) -> None:
 | **macOS 専用** | `say`・`afconvert` は macOS 標準コマンド。Linux / Windows では動作しない。`say` 不在時は health が `status: degraded`、synthesize は 503 |
 | **Docker 不可** | `say` はホスト macOS のフレームワーク依存のため Linux コンテナ内では動作しない |
 | **音声の可用性** | 利用可能な音声は macOS にインストールされたものに依存。日本語音声（Kyoko 等）は設定から追加ダウンロードが必要な場合がある |
-| **mp3 は ffmpeg 必須** | `mp3` 出力には `brew install ffmpeg` が必要。未導入なら `wav` を使用 |
+| **mp3 は ffmpeg 必須** | `mp3` 出力には ffmpeg が必要 (`brew install ffmpeg` / `sudo port install ffmpeg`)。未導入なら `wav` を使用 |
 | **Windows での m4a** | iTunes 未導入の Windows では M4A の再生に失敗する場合がある。**Windows クライアントには `wav` を推奨** |
 | **WAV の直接出力不可** | `say -o file.wav` は一部の macOS で `"fmt?"` エラーになる。本実装では `afconvert` で変換 |
 | **atime 更新** | macOS APFS は `noatime` マウントが有効な場合があり、ファイル読み込み時に `atime` が更新されないことがある。その場合 TTL は `mtime`（生成時刻）基準で動作する |
