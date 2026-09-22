@@ -9,10 +9,11 @@
 #
 # 通常アップデート実行内容:
 #   1. git pull でコードを最新化
-#   2. pip install で依存パッケージを更新
-#   3. 音声ディレクトリの権限を確認・修正
-#   4. LaunchDaemon を再起動
-#   5. ヘルスチェック
+#   2. パッケージマネージャー (Homebrew / MacPorts) の確認・記録
+#   3. pip install で依存パッケージを更新
+#   4. 音声ディレクトリの権限を確認・修正
+#   5. LaunchDaemon を再起動
+#   6. ヘルスチェック
 #
 # --reset 実行内容:
 #   LaunchDaemon 停止 → 全ファイル削除 → 再インストール案内
@@ -34,13 +35,16 @@ TTS_DAEMON_LABEL="local.tts-api"
 PLIST_PATH="/Library/LaunchDaemons/${TTS_DAEMON_LABEL}.plist"
 API_PORT="${TTS_PORT:-8000}"
 MODE="update"
+# パッケージマネージャー: CLI 指定のみを保持する (環境変数と記録は lib/pkg.sh 側)
+PKG_MANAGER_OPT=""
 
 # ──────────────────────────────────────────────────────────────────
 # 引数解析
 # ──────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --reset|-r)  MODE="reset"; shift ;;
+    --reset|-r)      MODE="reset"; shift ;;
+    --pkg-manager)   PKG_MANAGER_OPT="$2"; shift 2 ;;
     --help|-h)
       cat <<HELP
 Usage: update.sh [OPTIONS]
@@ -48,6 +52,7 @@ Usage: update.sh [OPTIONS]
 OPTIONS:
   (オプションなし)   コードを最新化して LaunchDaemon を再起動する
   --reset / -r       すべて削除して白紙に戻す (再インストール用)
+  --pkg-manager M    brew / macports / auto (default: auto = 記録済みの値を使う)
   --help  / -h       このヘルプを表示
 HELP
       exit 0 ;;
@@ -130,6 +135,48 @@ if [[ "$BEFORE" == "$AFTER" ]]; then
 else
   log_info "更新しました: $BEFORE → $AFTER"
   git -C "$INSTALL_DIR" log --oneline "${BEFORE}..${AFTER}" 2>/dev/null || true
+fi
+
+# ──────────────────────────────────────────────────────────────────
+log_step "パッケージマネージャーの確認"
+# ──────────────────────────────────────────────────────────────────
+# 共通ライブラリはコード更新後に読み込む (更新で追加された場合に備えて)。
+# 見つからなければ確認だけスキップして、更新自体は続行する。
+PKG_LIB_LOADED=false
+PKG_LIB_FALLBACK_DIR="$(dirname "${BASH_SOURCE[0]:-/nonexistent}")"
+for pkg_lib_candidate in \
+  "$INSTALL_DIR/scripts/lib/pkg.sh" \
+  "$PKG_LIB_FALLBACK_DIR/lib/pkg.sh"; do
+  if [[ -f "$pkg_lib_candidate" ]]; then
+    # shellcheck source=lib/pkg.sh
+    source "$pkg_lib_candidate"
+    PKG_LIB_LOADED=true
+    break
+  fi
+done
+
+if [[ "$PKG_LIB_LOADED" == "true" ]]; then
+  if pkg_resolve_manager "$PKG_MANAGER_OPT" "$INSTALL_DIR"; then
+    log_info "パッケージマネージャー: $(pkg_label "$PKG_MANAGER")  [$PKG_MANAGER_SOURCE]"
+    # 記録が無い古いインストール向けに、確定した値を書いておく
+    pkg_write_record "$INSTALL_DIR" "$PKG_MANAGER" \
+      || log_warn "記録の書き込みに失敗しました: $(pkg_record_file "$INSTALL_DIR")"
+  else
+    log_warn "パッケージマネージャーを特定できませんでした (更新は続行します)"
+  fi
+else
+  log_warn "scripts/lib/pkg.sh が見つかりません (パッケージマネージャーの確認をスキップ)"
+fi
+
+# 仮想環境が使えるか確認する。
+# Python を提供していたマネージャーを消すと .venv/bin/python が壊れるため。
+if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]] \
+  || ! "$INSTALL_DIR/.venv/bin/python" -c 'pass' 2>/dev/null; then
+  log_error "仮想環境が壊れています: $INSTALL_DIR/.venv"
+  log_error "  Python を提供していたパッケージマネージャーが変わった可能性があります"
+  log_error "  移行する場合  : bash $INSTALL_DIR/scripts/migrate-pkg-manager.sh --to <brew|macports>"
+  log_error "  作り直す場合  : bash $INSTALL_DIR/scripts/install.sh"
+  exit 1
 fi
 
 # ──────────────────────────────────────────────────────────────────

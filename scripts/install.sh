@@ -8,11 +8,20 @@
 # オプション付き:
 #   bash scripts/install.sh --port 8000 --host 0.0.0.0
 #
+# パッケージマネージャーは Homebrew / MacPorts のどちらでも使える:
+#   bash scripts/install.sh --pkg-manager macports
+#
 # 設定値の優先順位 (高 → 低):
 #   1. CLI オプション (--port, --host, ...)
 #   2. 環境変数 (TTS_PORT, TTS_HOST, ...)
 #   3. インストール先の .env ファイル
 #   4. app/config.py のデフォルト値
+#
+# パッケージマネージャーの優先順位 (高 → 低):
+#   1. CLI オプション (--pkg-manager)
+#   2. 環境変数 (TTS_PKG_MANAGER)
+#   3. 記録済みの値 ($INSTALL_DIR/.pkg-manager)
+#   4. 自動判定 (片方だけ入っていればそちら)
 # ================================================================
 set -euo pipefail
 
@@ -44,6 +53,10 @@ API_PUBLIC_BASE_URL="${TTS_PUBLIC_BASE_URL:-}"
 API_DEFAULT_VOICE="${TTS_DEFAULT_VOICE:-}"
 API_DEFAULT_FORMAT="${TTS_DEFAULT_FORMAT:-wav}"
 
+# パッケージマネージャー: CLI 指定のみを保持する。
+# 環境変数 TTS_PKG_MANAGER と記録済みの値は lib/pkg.sh 側で扱う。
+PKG_MANAGER_OPT=""
+
 TTS_DAEMON_LABEL="local.tts-api"
 PLIST_DIR="/Library/LaunchDaemons"
 PLIST_PATH="$PLIST_DIR/${TTS_DAEMON_LABEL}.plist"
@@ -61,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --default-voice) API_DEFAULT_VOICE="$2";     shift 2 ;;
     --branch)        REPO_BRANCH="$2";           shift 2 ;;
     --repo)          REPO_URL="$2";              shift 2 ;;
+    --pkg-manager)   PKG_MANAGER_OPT="$2";       shift 2 ;;
     --help|-h)
       cat <<HELP
 Usage: install.sh [OPTIONS]
@@ -74,9 +88,14 @@ OPTIONS:
   --default-voice V    デフォルト音声 (say -v)       (default: 空=システム既定)
   --branch      BR     Git ブランチ                  (default: $REPO_BRANCH)
   --repo        URL    リポジトリ URL                 (default: $REPO_URL)
+  --pkg-manager M      brew / macports / auto        (default: auto)
 
-環境変数でも同じ項目を設定できます (TTS_PORT, TTS_HOST, ...)。
+環境変数でも同じ項目を設定できます (TTS_PORT, TTS_HOST, TTS_PKG_MANAGER, ...)。
 CLI オプションが環境変数より優先されます。
+
+--pkg-manager auto (既定) の動作:
+  記録済みの値があればそれを使い、無ければ入っている方を使います。
+  両方入っていて記録も無い場合は、勝手に選ばずエラーで止まります。
 HELP
       exit 0 ;;
     *) log_error "不明なオプション: $1  (--help で使い方を確認)"; exit 1 ;;
@@ -91,8 +110,44 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 ARCH="$(uname -m)"
-[[ "$ARCH" == "arm64" ]] && HOMEBREW_PREFIX="/opt/homebrew" || HOMEBREW_PREFIX="/usr/local"
-log_info "アーキテクチャ: $ARCH (Homebrew prefix: $HOMEBREW_PREFIX)"
+log_info "アーキテクチャ: $ARCH"
+
+# ──────────────────────────────────────────────────────────────────
+# 共通ライブラリ (scripts/lib/pkg.sh) の読み込み
+#   curl | bash で実行された場合はローカルに無いため、リポジトリから取得する。
+# ──────────────────────────────────────────────────────────────────
+PKG_LIB_TMPDIR=""
+SUDO_KEEPALIVE_PID=""
+cleanup() {
+  [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+  [[ -n "$PKG_LIB_TMPDIR" ]] && rm -rf "$PKG_LIB_TMPDIR"
+  return 0
+}
+trap cleanup EXIT
+
+SCRIPT_DIR=""
+if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/lib/pkg.sh" ]]; then
+  # shellcheck source=lib/pkg.sh
+  source "$SCRIPT_DIR/lib/pkg.sh"
+else
+  # https://github.com/OWNER/REPO → https://raw.githubusercontent.com/OWNER/REPO
+  RAW_BASE="$(echo "${REPO_URL%.git}" | sed \
+    -e 's#^https://github.com/#https://raw.githubusercontent.com/#' \
+    -e 's#/$##')"
+  PKG_LIB_TMPDIR="$(mktemp -d)"
+  log_info "共通ライブラリを取得します: ${RAW_BASE}/${REPO_BRANCH}/scripts/lib/pkg.sh"
+  if ! curl -fsSL "${RAW_BASE}/${REPO_BRANCH}/scripts/lib/pkg.sh" -o "$PKG_LIB_TMPDIR/pkg.sh"; then
+    log_error "共通ライブラリの取得に失敗しました"
+    log_error "  リポジトリを clone してから scripts/install.sh を実行してください"
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$PKG_LIB_TMPDIR/pkg.sh"
+fi
 
 echo ""
 echo -e "${BOLD}=== OSX TTS API インストーラー ===${RESET}"
@@ -112,7 +167,6 @@ if ! sudo -n true 2>/dev/null; then
 fi
 ( while true; do sudo -n true; sleep 50; done ) &
 SUDO_KEEPALIVE_PID=$!
-trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null || true' EXIT
 
 # ──────────────────────────────────────────────────────────────────
 log_step "既存インストールのクリーンアップ"
@@ -151,58 +205,78 @@ done
 log_info "クリーンアップ完了"
 
 # ──────────────────────────────────────────────────────────────────
-log_step "前提条件チェック & ツール更新"
+log_step "前提条件チェック (パッケージマネージャー & ツール)"
 # ──────────────────────────────────────────────────────────────────
 
-# Homebrew
-if ! command -v brew &>/dev/null; then
-  log_error "Homebrew が見つかりません。先にインストールしてください:"
-  log_error '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-  exit 1
-fi
-log_info "Homebrew: $(brew --version | head -1)"
+# --- パッケージマネージャー (Homebrew / MacPorts) の選択 ---
+pkg_resolve_manager "$PKG_MANAGER_OPT" "$INSTALL_DIR" || exit 1
+log_info "パッケージマネージャー: $(pkg_label "$PKG_MANAGER")  [$PKG_MANAGER_SOURCE]"
+log_ok "本体   : $(pkg_manager_bin "$PKG_MANAGER")"
+log_ok "prefix : $(pkg_prefix "$PKG_MANAGER")"
 
-# Python 3.11+
-PYTHON_BIN=""
-for py in python3.13 python3.12 python3.11; do
-  if command -v "$py" &>/dev/null; then
-    if "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
-      PYTHON_BIN="$py"; break
-    fi
-  fi
-done
+# --- Python 3.11+ ---
+# 選んだマネージャーの配下だけを絶対パスで探す。
+# 両方入っている環境で、選んでいない側の python を拾わないようにするため。
+PYTHON_BIN="$(pkg_python_path "$PKG_MANAGER" 2>/dev/null || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
-  log_warn "Python 3.11+ が見つかりません。インストールします..."
-  brew install python@3.12 </dev/null
-  PYTHON_BIN="python3.12"
+  log_warn "$(pkg_label "$PKG_MANAGER") 配下に Python 3.11+ が見つかりません。インストールします..."
+  pkg_install "$PKG_MANAGER" python
+  PYTHON_BIN="$(pkg_python_path "$PKG_MANAGER" 2>/dev/null || true)"
+  if [[ -z "$PYTHON_BIN" ]]; then
+    log_error "Python のインストール後も見つかりません: $(pkg_prefix "$PKG_MANAGER")/bin/"
+    exit 1
+  fi
 fi
-log_info "Python: $($PYTHON_BIN --version)"
+log_info "Python: $("$PYTHON_BIN" --version)  ($PYTHON_BIN)"
 
-# git
-if command -v git &>/dev/null; then
-  brew upgrade git </dev/null 2>/dev/null \
-    && log_ok "git を更新しました" \
-    || log_ok "git は既に最新版です"
-else
+# --- git ---
+# Xcode Command Line Tools の git (/usr/bin/git) で十分なので、
+# 見つからない場合だけ、選んだマネージャーでインストールする。
+GIT_BIN="$(command -v git 2>/dev/null || true)"
+if [[ -z "$GIT_BIN" ]]; then
   log_warn "git が見つかりません。インストールします..."
-  brew install git </dev/null
+  pkg_install "$PKG_MANAGER" git
+  GIT_BIN="$(pkg_exec_path "$PKG_MANAGER" git 2>/dev/null || command -v git 2>/dev/null || true)"
+  if [[ -z "$GIT_BIN" ]]; then
+    log_error "git のインストール後も見つかりません"
+    exit 1
+  fi
 fi
-log_info "git: $(git --version)"
+log_info "git: $("$GIT_BIN" --version)  ($GIT_BIN)"
+
+# --- ffmpeg (mp3 出力用。無くても他フォーマットは使える) ---
+# LaunchDaemon の PATH は最小限 (/usr/bin:/bin:/usr/sbin:/sbin) なので、
+# 名前だけでは見つからない。.env には絶対パスを書く。
+FFMPEG_PATH="$(pkg_ffmpeg_path "$PKG_MANAGER" 2>/dev/null || true)"
+if [[ -n "$FFMPEG_PATH" ]]; then
+  log_info "ffmpeg: $FFMPEG_PATH"
+else
+  FFMPEG_PATH="ffmpeg"
+  log_warn "ffmpeg が見つかりません。MP3 出力は使えません (wav / m4a / aiff は使えます)"
+  case "$PKG_MANAGER" in
+    brew)     log_warn "  導入する場合: brew install ffmpeg" ;;
+    macports) log_warn "  導入する場合: sudo port install ffmpeg" ;;
+  esac
+fi
 
 # ──────────────────────────────────────────────────────────────────
 log_step "リポジトリの取得"
 # ──────────────────────────────────────────────────────────────────
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   log_info "既存インストールを更新します: $INSTALL_DIR"
-  git -C "$INSTALL_DIR" fetch origin </dev/null
-  git -C "$INSTALL_DIR" checkout "$REPO_BRANCH" </dev/null
-  git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH" </dev/null
+  "$GIT_BIN" -C "$INSTALL_DIR" fetch origin </dev/null
+  "$GIT_BIN" -C "$INSTALL_DIR" checkout "$REPO_BRANCH" </dev/null
+  "$GIT_BIN" -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH" </dev/null
 else
   sudo mkdir -p "$(dirname "$INSTALL_DIR")"
-  sudo git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR" </dev/null
+  sudo "$GIT_BIN" clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR" </dev/null
   sudo chown -R "$(id -un):$(id -gn)" "$INSTALL_DIR"
 fi
 log_info "インストール先: $INSTALL_DIR"
+
+# 使っているパッケージマネージャーを記録する (.env には書かない)
+pkg_write_record "$INSTALL_DIR" "$PKG_MANAGER"
+log_ok "パッケージマネージャーを記録: $(pkg_record_file "$INSTALL_DIR") ($PKG_MANAGER)"
 
 # ──────────────────────────────────────────────────────────────────
 log_step "Python 仮想環境のセットアップ"
@@ -221,7 +295,7 @@ log_step ".env 設定ファイルの生成"
 ENV_FILE="$INSTALL_DIR/.env"
 if [[ -f "$ENV_FILE" ]]; then
   log_warn ".env が既に存在するためスキップします: $ENV_FILE"
-  log_warn "  変更後の反映: launchctl kickstart -k gui/$UID/$TTS_DAEMON_LABEL"
+  log_warn "  変更後の反映: sudo launchctl kickstart -k system/$TTS_DAEMON_LABEL"
 else
   cat > "$ENV_FILE" <<EOF
 # OSX TTS API — 実行時設定 (自動生成: $(date))
@@ -261,7 +335,9 @@ TTS_MAX_CONCURRENT_SYNTHESIS=4
 TTS_SYNTHESIS_TIMEOUT_SECONDS=30
 
 # --- 外部コマンド -----------------------------------------------------------
-TTS_FFMPEG_PATH=ffmpeg
+# LaunchDaemon の PATH は最小限なので絶対パスを書く。
+# ffmpeg が未導入の場合のみ 'ffmpeg' (名前のまま)。
+TTS_FFMPEG_PATH=$FFMPEG_PATH
 EOF
   log_info ".env を生成しました: $ENV_FILE"
 fi
@@ -382,6 +458,7 @@ echo "  Swagger UI         : http://127.0.0.1:${API_PORT}/docs"
 echo "  設定ファイル       : $ENV_FILE"
 echo "  ログ               : $LOG_DIR/"
 echo "  音声ファイル       : $AUDIO_DIR/"
+echo "  パッケージ管理     : $(pkg_label "$PKG_MANAGER")  ($(pkg_record_file "$INSTALL_DIR"))"
 echo ""
 echo "管理コマンド:"
 echo "  # 状態確認"
@@ -395,3 +472,6 @@ echo "  tail -f $LOG_DIR/stderr.log"
 echo ""
 echo "  # アンインストール"
 echo "  bash $INSTALL_DIR/scripts/uninstall.sh"
+echo ""
+echo "  # パッケージマネージャーの移行 (Homebrew <-> MacPorts)"
+echo "  bash $INSTALL_DIR/scripts/migrate-pkg-manager.sh --to macports --dry-run"
