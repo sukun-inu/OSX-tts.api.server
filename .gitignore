@@ -7,6 +7,12 @@ venv/
 
 # 環境設定
 .env
+# 使用中のパッケージマネージャー (brew / macports) の記録
+.pkg-manager
+
+# 移行スクリプトが作るバックアップ
+backup/
+.venv.bak-*
 
 # 生成された音声ファイル
 audio/

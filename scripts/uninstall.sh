@@ -55,13 +55,32 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────
+# 使用中だったパッケージマネージャーの確認 (任意)
+# ──────────────────────────────────────────────────────────────────
+# Homebrew も MacPorts も入っていない環境でもアンインストールできるよう、
+# ライブラリが無ければ黙ってスキップする。
+# (pkg_read_record / pkg_label はマネージャー本体を必要としない)
+USED_PKG_MANAGER=""
+PKG_LIB_FALLBACK_DIR="$(dirname "${BASH_SOURCE[0]:-/nonexistent}")"
+for pkg_lib_candidate in \
+  "$INSTALL_DIR/scripts/lib/pkg.sh" \
+  "$PKG_LIB_FALLBACK_DIR/lib/pkg.sh"; do
+  if [[ -f "$pkg_lib_candidate" ]]; then
+    # shellcheck source=lib/pkg.sh
+    source "$pkg_lib_candidate"
+    USED_PKG_MANAGER="$(pkg_read_record "$INSTALL_DIR" 2>/dev/null || true)"
+    break
+  fi
+done
+
+# ──────────────────────────────────────────────────────────────────
 # 確認プロンプト
 # ──────────────────────────────────────────────────────────────────
 if [[ "$YES" == "false" ]]; then
   echo -e "${RED}${BOLD}警告: OSX TTS API をアンインストールします${RESET}"
   echo ""
   echo "以下を削除します:"
-  echo "  $INSTALL_DIR                            (アプリ本体 + .venv)"
+  echo "  $INSTALL_DIR                            (アプリ本体 + .venv + .pkg-manager)"
   echo "  $LOG_DIR                                (ログ)"
   echo "  $PLIST_PATH  (LaunchDaemon)"
   [[ "$KEEP_AUDIO" == "false" ]] && \
@@ -129,3 +148,22 @@ fi
 # ──────────────────────────────────────────────────────────────────
 echo ""
 log_info "アンインストール完了"
+
+# パッケージマネージャー本体と、それが入れた python / ffmpeg は削除しない。
+# 他のソフトが使っている可能性があるため、判断はユーザーに任せる。
+if [[ -n "$USED_PKG_MANAGER" ]]; then
+  echo ""
+  log_warn "$(pkg_label "$USED_PKG_MANAGER") 本体と、そこから入れた python / ffmpeg は残しています"
+  case "$USED_PKG_MANAGER" in
+    brew)
+      echo "  不要なら (他のソフトが使っていないことを確認してから):"
+      echo "    brew uninstall python@3.12"
+      echo "    brew uninstall ffmpeg"
+      ;;
+    macports)
+      echo "  不要なら (他のソフトが使っていないことを確認してから):"
+      echo "    sudo port uninstall python312"
+      echo "    sudo port uninstall ffmpeg"
+      ;;
+  esac
+fi

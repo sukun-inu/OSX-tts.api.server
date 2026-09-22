@@ -25,8 +25,12 @@ English: [README.md](README.md)
 | 要件 | 用途 |
 |------|------|
 | macOS | `say` コマンド（音声生成）。**必須** |
-| Python 3.11 以上 | API サーバー実行 |
+| Homebrew **または** MacPorts | Python・ffmpeg の導入に使用。どちらか一方でよい |
+| Python 3.11 以上 | API サーバー実行。無ければインストーラーが入れる |
 | ffmpeg | `mp3` 形式を使う場合のみ |
+
+> Homebrew と MacPorts のどちらでも動く。どちらを使っているかは
+> `/usr/local/opt/tts-api/.pkg-manager` に記録され、以後はその記録に従う。
 
 > Windows 上ではコード編集はできるが `say` が無いため音声生成は動作しない。
 > サーバー本体は macOS で実行すること。
@@ -45,7 +49,23 @@ curl -fsSL https://raw.githubusercontent.com/sukun-inu/OSX-tts.api.server/main/s
 curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- \
   --port 8000 \
   --public-url http://192.168.1.50:8000
+
+# パッケージマネージャーを指定する場合
+curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- \
+  --pkg-manager macports
 ```
+
+`--pkg-manager` には `brew` / `macports` / `auto` を指定できる。既定は `auto`。
+
+| 状況 | `auto` の動作 |
+|------|--------------|
+| 記録 (`.pkg-manager`) がある | 記録されている方を使う |
+| 片方だけ入っている | そちらを使う |
+| 両方入っていて記録がない | **勝手に選ばずエラーで止まる**（`--pkg-manager` で指定する） |
+| どちらも入っていない | 両方の導入方法を案内してエラーで止まる |
+
+環境変数 `TTS_PKG_MANAGER` でも指定できる。優先順位は
+`--pkg-manager` > `TTS_PKG_MANAGER` > 記録 > 自動判定。
 
 インストール後の管理コマンド:
 
@@ -65,6 +85,55 @@ bash /usr/local/opt/tts-api/scripts/update.sh
 # アンインストール (音声ファイルを残す場合)
 bash /usr/local/opt/tts-api/scripts/uninstall.sh --keep-audio
 ```
+
+### パッケージマネージャーを乗り換える (Homebrew ⇄ MacPorts)
+
+移行先のパッケージマネージャーを先にインストールしてから、次を実行する。
+
+```bash
+# まず何が起きるか確認する (何も変更しない)
+bash /usr/local/opt/tts-api/scripts/migrate-pkg-manager.sh --to macports --dry-run
+
+# 実行する
+bash /usr/local/opt/tts-api/scripts/migrate-pkg-manager.sh --to macports
+
+# 逆向き (MacPorts → Homebrew) も同じ
+bash /usr/local/opt/tts-api/scripts/migrate-pkg-manager.sh --to brew
+```
+
+やること:
+
+1. 移行先の Python を用意する（無ければインストール）
+2. `.env` ・ plist ・ `.pkg-manager` を `backup/<日時>/` にバックアップ
+3. サービスを止め、`.venv` を `.venv.bak-<日時>` に退避（削除しない）
+4. 移行先の Python で `.venv` を同じ場所に作り直す
+5. `.env` の `TTS_FFMPEG_PATH` を移行先の絶対パスに更新する
+   （移行元配下の絶対パスか `ffmpeg` の場合のみ。独自に設定した値は変更しない）
+6. サービスを起動し、`/api/v1/health` で確認する
+
+途中で失敗した場合は自動で元に戻し、元のパッケージマネージャーのまま
+サーバーが動き続ける。ポート番号などの `.env` の設定はそのまま保たれる。
+
+移行元のパッケージマネージャー本体と、そこから入れた python / ffmpeg は
+**アンインストールしない**。削除するかどうかは自分で判断すること。
+
+> **Homebrew をアンインストールする前に**
+>
+> 既定のインストール先 `/usr/local/opt/tts-api` と `/usr/local/var/...` は、
+> Intel Mac で Homebrew が使うフォルダと同じ場所にある。Homebrew の
+> アンインストーラーがこれらを巻き込んで消してしまう可能性がある。
+>
+> 1. Homebrew 公式アンインストーラーのドライランで、tts-api のフォルダが
+>    削除対象に含まれていないことを確認する
+>
+>    ```bash
+>    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" -- --dry-run
+>    ```
+>
+> 2. `/usr/local/opt/tts-api/.env` を別の場所にバックアップしておく
+>
+> （ここでの「アンインストーラー」は Homebrew のものであり、
+> 本リポジトリの `scripts/uninstall.sh` ではない）
 
 ### 開発 (ローカル起動)
 
